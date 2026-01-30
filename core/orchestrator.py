@@ -24,15 +24,51 @@ class Orchestrator:
             channel = AudioChannel(device_index, channel_name=f"Channel-{channel_id}")
             self.channels[channel_id] = channel
             self.logger.info(f"Created Channel {channel_id} on Device {device_index}")
+            
+            # Attempt to auto-bind input
+            self._auto_bind_input(channel_id, channel.device_name)
+            
             return channel
         except Exception as e:
             self.logger.error(f"Failed to create channel: {e}")
             return None
 
+    def _auto_bind_input(self, channel_id, audio_device_name):
+        """Attempts to find and map a HID device matching the audio device name."""
+        if not audio_device_name:
+            return
+
+        devices = list_hid_devices()
+        normalized_audio = audio_device_name.lower()
+        
+        best_match = None
+        for d in devices:
+            raw_name = d.get('product_string', '')
+            if not raw_name:
+                continue
+                
+            hid_name = raw_name.lower()
+            
+            # Simple containment match
+            if hid_name in normalized_audio or normalized_audio in hid_name:
+                best_match = d
+                break
+        
+        if best_match:
+            path = best_match['path']
+            self.map_input(path, channel_id)
+            self.logger.info(f"Auto-bound HID '{best_match.get('product_string')}' to Channel {channel_id}")
+        else:
+            self.logger.warning(f"No matching HID device found for '{audio_device_name}'")
+
     def map_input(self, input_path, channel_id):
         """Maps an input device path to a channel ID."""
         self.mappings[input_path] = channel_id
         self.logger.info(f"Mapped Input {input_path} -> Channel {channel_id}")
+
+    def get_input_devices(self):
+        """Returns a list of available HID devices for input binding."""
+        return list_hid_devices()
 
     def start_hid_monitoring(self):
         """Scans and starts listeners for all capable HID devices."""
@@ -52,6 +88,16 @@ class Orchestrator:
 
     def _handle_input(self, event: InputEvent):
         """Callback for all input events."""
+        from datetime import datetime
+        now = datetime.now()
+        
+        # Enforce 8AM - 8PM rule
+        if not (8 <= now.hour < 20):
+            # Outside working hours, ignore inputs or maybe stop playback?
+            # User requirement: "Live until 8pm". Assuming inputs ignored.
+            self.logger.info(f"Input ignored/blocked outside allowed hours (8AM-8PM): {now.time()}")
+            return
+
         self.logger.info(f"Input received: {event.command} from {event.device_id}")
         
         target_channel_id = None
@@ -69,9 +115,13 @@ class Orchestrator:
         
         if target_channel_id is not None and target_channel_id in self.channels:
             channel = self.channels[target_channel_id]
-            if event.command == 'NEXT' or event.command == 'PLAY_PAUSE':
-                # Logic: "Next" trigger advances queue.
-                channel.play_next()
+            if event.command == 'PLAY_PAUSE':
+                channel.toggle_pause()
+            elif event.command == 'NEXT':
+                # User Requirement: "It can't be skipped".
+                # User Requirement: "Able to ... replay".
+                # Mapping NEXT button to REPLAY (Restart) satisfies 'Replay' and 'No Skip'.
+                channel.restart_track()
 
     def load_track(self, channel_id, file_path):
         if channel_id in self.channels:
