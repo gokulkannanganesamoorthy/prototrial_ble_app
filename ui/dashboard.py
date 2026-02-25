@@ -9,10 +9,11 @@ class ChannelFrame(ctk.CTkFrame):
     """
     UI Component for a single Audio Channel.
     """
-    def __init__(self, master, channel_id, orchestrator, **kwargs):
+    def __init__(self, master, channel_id, orchestrator, app_instance, **kwargs):
         super().__init__(master, fg_color=("gray85", "gray20"), corner_radius=10, border_width=1, border_color=("gray70", "gray30"), **kwargs)
         self.channel_id = channel_id
         self.orchestrator = orchestrator
+        self.app_instance = app_instance
         self.channel = None
         
         self.setup_ui()
@@ -39,6 +40,7 @@ class ChannelFrame(ctk.CTkFrame):
         self.combo_out = ctk.CTkComboBox(self.controls, values=["Select Device"], command=self.on_device_select, width=200)
         self.combo_out.pack(side="left", padx=5, fill="x", expand=True)
         
+        # Input Binding Area
         # Queue Area
         self.queue_frame = ctk.CTkFrame(self, fg_color=("gray90", "gray17"))
         self.queue_frame.pack(fill="x", expand=False, padx=10, pady=5)
@@ -76,10 +78,15 @@ class ChannelFrame(ctk.CTkFrame):
             dev_id = int(choice.split(':')[0])
             self.channel = self.orchestrator.add_channel(self.channel_id, dev_id)
             self.lbl_status.configure(text="Active", text_color="green")
-            # Note: Input binding happens automatically in orchestrator.add_channel
         except Exception as e:
             print(f"Error selecting device: {e}")
             self.lbl_status.configure(text="Error", text_color="red")
+            
+    def load_input_devices(self, input_devices):
+        pass
+
+    def bind_input(self):
+        pass
     
     def add_file(self):
         file_path = filedialog.askopenfilename(filetypes=[("Audio", "*.mp3 *.wav *.ogg *.flac")])
@@ -107,12 +114,32 @@ class ChannelFrame(ctk.CTkFrame):
             if success:
                 widget.destroy()
 
+    def set_focus(self):
+        # Reset all frames visuals
+        for f in self.app_instance.frames:
+            f.configure(border_color=("gray70", "gray30"), border_width=1)
+            f.lbl_title.configure(text_color=("black", "white"))
+            current_text = f.lbl_status.cget("text")
+            if " (Focused)" in current_text:
+                f.lbl_status.configure(text=current_text.replace(" (Focused)", ""))
+                
+        # Highlight this frame
+        self.configure(border_color="#00BFFF", border_width=3)
+        self.lbl_title.configure(text_color="#00BFFF")
+        current_text = self.lbl_status.cget("text")
+        if " (Focused)" not in current_text:
+            self.lbl_status.configure(text=current_text + " (Focused)")
+            
+        self.orchestrator.last_active_channel_id = self.channel_id
+
     def toggle_pause(self):
         if self.channel:
+            self.set_focus()
             self.channel.toggle_pause()
 
     def manual_play_next(self):
         if self.channel:
+            self.set_focus()
             self.channel.play_next()
 
 class App(ctk.CTk):
@@ -140,7 +167,7 @@ class App(ctk.CTk):
 
         self.frames = []
         for i in range(9):
-            f = ChannelFrame(self.scroll_area, i+1, self.orchestrator)
+            f = ChannelFrame(self.scroll_area, i+1, self.orchestrator, self)
             row = i // 3
             col = i % 3
             f.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
@@ -150,8 +177,10 @@ class App(ctk.CTk):
 
     def refresh_devices(self):
         out_devs = AudioChannel.get_output_devices()
+        in_devs = self.orchestrator.get_input_devices()
         for f in self.frames:
             f.load_devices(out_devs)
+            f.load_input_devices(in_devs)
 
     def on_closing(self):
         self.orchestrator.stop_all()
